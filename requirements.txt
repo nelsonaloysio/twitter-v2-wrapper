@@ -1,0 +1,2 @@
+pandas>=0.25
+searchtweets-v2>=1.1.1
