@@ -66,7 +66,7 @@ class TwitterSearch(Twitter):
                 responses[key] += values
 
             total += json_response.get("meta", {}).get("result_count", 0)
-            params["next_token"] = json_response.get("meta").get("next_token", None)
+            params["next_token"] = json_response.get("meta", {}).get("next_token", None)
 
             if output_file is not None:
                 self.__write_json(json_response, output_file, mode="a" if total else "w")
