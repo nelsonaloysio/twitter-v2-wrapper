@@ -25,13 +25,13 @@ class Twitter():
     def __init__(self):
         ''' Initializes class. '''
 
-    def request(self, endpoint, bearer_token=BEARER_TOKEN, **params):
+    def request(self, endpoint, bearer_token=BEARER_TOKEN, **params) -> dict:
         headers = self.__create_headers(bearer_token)
         json_response = self.__connect_to_endpoint(endpoint, headers, **params)
         return json_response
 
     @staticmethod
-    def __connect_to_endpoint(endpoint, headers, **params):
+    def __connect_to_endpoint(endpoint, headers, **params) -> dict:
         response = requests.request(
             "GET", endpoint, headers=headers, params=params)
         if response.status_code != 200:
@@ -45,14 +45,24 @@ class Twitter():
 
 class TwitterSearch(Twitter):
 
-    def search(self, interval=1, limit=None, output_file=None, **params) -> dict:
+    def search(self, interval=1, limit=None, low_memory=False, output_file=None, **params) -> dict:
         '''
         Returns tweet data, loops until finished.
         '''
+        def add_response(json_response):
+            for key, item in json_response.items():
+                if type(item) == list:
+                    responses[key] += item
+                elif type(item) == dict:
+                    add_response(item)
+
         params.pop("granularity", None)
         responses = defaultdict(list)
         time_to_print = time()
         total = 0
+
+        if low_memory and not output_file:
+            raise ValueError("missing required OUTPUT_FILE parameter for LOW_MEMORY operations.")
 
         while True:
             json_response = self.request(
@@ -60,16 +70,14 @@ class TwitterSearch(Twitter):
                 **self.__params(**params),
             )
 
-            responses["data"] += json_response.get("data", [])
-            responses["errors"] += json_response.get("errors", [])
-            for key, values in json_response.get("includes", {}).items():
-                responses[key] += values
-
-            total += json_response.get("meta", {}).get("result_count", 0)
-            params["next_token"] = json_response.get("meta", {}).get("next_token", None)
+            if not low_memory:
+                add_response(json_response)
 
             if output_file is not None:
                 self.__write_json(json_response, output_file, mode="a" if total else "w")
+
+            total += json_response.get("meta", {}).get("result_count", 0)
+            params["next_token"] = json_response.get("meta", {}).get("next_token", None)
 
             if (params["next_token"] is None) or (limit and total >= limit):
                 break
@@ -83,9 +91,9 @@ class TwitterSearch(Twitter):
         log.info(f"Captured {total} total tweets.")
         return dict(responses)
 
-    def counts(self, max_results=None, **params) -> list:
+    def counts(self, output_file=None, max_results=None, **params) -> dict:
         '''
-        Returns tweet count, ignores `max_results`.
+        Returns tweet count, ignores `max_results` parameter.
         '''
         json_response = self.request(
             endpoint=ENDPOINT_DEFAULT.format("counts"),
@@ -95,17 +103,19 @@ class TwitterSearch(Twitter):
         log.info("Returned %s tweets." % json_response.get(
             "meta", {}).get("total_tweet_count", 0)
         )
+        if output_file is not None:
+            self.__write_json(json_response, output_file)
         return json_response
 
     @staticmethod
-    def __params(interval=None, limit=None, output_file=None, **params):
+    def __params(interval=None, limit=None, low_memory=False, output_file=None, **params) -> dict:
         '''
-        Returns valid parameters only.
+        Returns valid parameters only, ignores unrequired arguments from within class.
         '''
         return {key: value for key, value in params.items() if value is not None}
 
     @staticmethod
-    def __write_json(json_response, output_file, mode="w"):
+    def __write_json(json_response, output_file, mode="w") -> None:
         '''
         Dumps responses to file, one record per line.
         '''
@@ -139,11 +149,11 @@ def args() -> dict:
     argparser.add_argument("--until-id", help="Last tweet ID to capture")
     argparser.add_argument("--max-results", default=100, type=int, help="Maximum results (API default is 10, customly set to 100)")
     argparser.add_argument("--expansions", help="Specified expansions results in full objects in the 'includes' response object")
-    argparser.add_argument("--tweet-fields", help='Tweet JSON attributes to include in endpoint responses (default: "id, text")')
-    argparser.add_argument("--media-fields", help='Media JSON attributes to include in endpoint responses (default: "id")')
-    argparser.add_argument("--poll-fields", help='Twitter Poll JSON attributes to include in endpoint responses (default: "id")')
-    argparser.add_argument("--place-fields", help='Twitter Place JSON attributes to include in endpoint responses (default: "id")')
-    argparser.add_argument("--user-fields", help='User JSON attributes to include in endpoint responses (default: "id")')
+    argparser.add_argument("--tweet-fields", dest="tweet.fields", help='Tweet JSON attributes to include in endpoint responses (default: "id, text")')
+    argparser.add_argument("--media-fields", dest="media.fields", help='Media JSON attributes to include in endpoint responses (default: "id")')
+    argparser.add_argument("--poll-fields", dest="poll.fields", help='Twitter Poll JSON attributes to include in endpoint responses (default: "id")')
+    argparser.add_argument("--place-fields", dest="place.fields", help='Twitter Place JSON attributes to include in endpoint responses (default: "id")')
+    argparser.add_argument("--user-fields", dest="user.fields", help='User JSON attributes to include in endpoint responses (default: "id")')
     argparser.add_argument("--extra-headers", help="JSON-formatted str representing a dict of additional HTTP request headers")
     argparser.add_argument("--interval", default=1, type=int, help="Request interval (seconds, default: 1)")
     argparser.add_argument("--limit", default=None, type=int, help="Maximum number of tweets to capture")
@@ -152,9 +162,12 @@ def args() -> dict:
 
 def main(**args) -> None:
     twitter = TwitterSearch()
-    return twitter.search(**args)\
-           if args.get("granularity") is None\
-           else twitter.counts(**args)
+    json_response = twitter.search(low_memory=True, **args)\
+                    if args.get("granularity") is None else\
+                    twitter.counts(**args)
+    if not args.get("output_file", None):
+        print(json.dumps(json_response, indent=2))
+    return json_response
 
 
 if __name__ == "__main__":
