@@ -77,7 +77,8 @@ class TwitterSearch(Twitter):
                 self.__write_json(json_response, output_file, mode="a" if total else "w")
 
             total += json_response.get("meta", {}).get("result_count", 0)
-            params["next_token"] = json_response.get("meta", {}).get("next_token", None)
+            params["next_token"] = json_response.get("meta", {})\
+                                                .get("next_token", params.get("next_token", None))
 
             if (params["next_token"] is None) or (limit and total >= limit):
                 break
