@@ -56,17 +56,16 @@ class TwitterSearch(Twitter):
                 elif type(item) == dict:
                     add_response(item)
 
-        params.pop("granularity", None)
-        output_dict = defaultdict(list)
-        time_to_print = time()
         total = 0
+        time_to_print = time()
+        output_dict = defaultdict(list)
 
         if low_memory is True and output_file is None:
             raise ValueError("missing required OUTPUT_FILE parameter for LOW_MEMORY operations.")
 
         while True:
             response = self.request(
-                endpoint=ENDPOINT_DEFAULT.format("search"),
+                endpoint=ENDPOINT_DEFAULT.format("search" if params.get("granularity") is None else "counts"),
                 **self.__params(**params),
             )
 
@@ -84,45 +83,33 @@ class TwitterSearch(Twitter):
             if output_file is not None:
                 self.__write_json(response, output_file, mode="a" if total else "w")
 
-            total += response.get("meta", {}).get("result_count", 0)
+            total += response.get("meta", {}).get("result_count", response.get("meta", {}).get("total_tweet_count", 0))
             params["next_token"] = response.get("meta", {}).get("next_token", None)
 
             if (params["next_token"] is None) or (limit and total >= limit):
                 break
 
             if (time() - time_to_print) > 10:
-                log.info(f"Captured {total} tweets.")
+                log.info(f"Returned {total} tweets.")
                 time_to_print = time()
 
             sleep(interval) if float(interval) > 0 else None
 
-        log.info(f"Captured {total} total tweets.")
+        log.info(f"Returned {total} total tweets.")
         return dict(output_dict)
-
-    def counts(self, output_file=None, max_results=None, next_token=None, **params) -> dict:
-        '''
-        Returns tweet count, ignores `max_results` and `next_token` parameters.
-        '''
-        response = self.request(
-            endpoint=ENDPOINT_DEFAULT.format("counts"),
-            granularity=params.pop("granularity", "day"),
-            **self.__params(**params),
-        )
-        if response.status_code == 200:
-            response = response.json()
-            log.info("Returned %s tweets." % response.get(
-                "meta", {}).get("total_tweet_count", 0)
-            )
-            if output_file is not None:
-                self.__write_json(response, output_file)
-        return response
 
     @staticmethod
     def __params(interval=None, limit=None, low_memory=False, output_file=None, **params) -> dict:
         '''
         Returns valid parameters only, ignores unrequired arguments from within class.
         '''
-        return {key: value for key, value in params.items() if value is not None}
+        return {
+            key: value
+            for key, value in params.items()
+            if value is not None and (
+                params.get("granularity") is None or key != "max_results"
+            )
+        }
 
     @staticmethod
     def __write_json(json_response, output_file, mode="w") -> None:
@@ -175,9 +162,7 @@ def args() -> dict:
 
 def main(**args) -> None:
     twitter = TwitterSearch()
-    response = twitter.search(low_memory=True, **args)\
-               if args.get("granularity") is None else\
-               twitter.counts(**args)
+    response = twitter.search(low_memory=True, **args)
     return response
 
 

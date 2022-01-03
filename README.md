@@ -128,7 +128,7 @@ twitter.search(
 Returns number of tweets matching query, by default over the last month.
 
 ```
-twitter.counts(
+twitter.search(
   query="#Twitter is:retweet",
   granularity="day",
 )
