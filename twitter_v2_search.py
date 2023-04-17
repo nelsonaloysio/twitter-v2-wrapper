@@ -5,7 +5,7 @@ import logging as log
 from argparse import ArgumentParser
 from collections import defaultdict
 from os import environ, mkdir
-from os.path import dirname, isdir, splitext
+from os.path import dirname, isdir, join, splitext
 from time import sleep, time
 
 import requests
@@ -19,6 +19,7 @@ BEARER_TOKEN = environ.get("BEARER_TOKEN")
 
 ENDPOINT_DEFAULT = "https://api.twitter.com/2/tweets/{}/all"
 
+SECONDS_TO_SLEEP = 60
 
 class Twitter():
 
@@ -63,37 +64,47 @@ class TwitterSearch(Twitter):
         if low_memory is True and output_file is None:
             raise ValueError("missing required OUTPUT_FILE parameter for LOW_MEMORY operations.")
 
+        if not isdir(dirname(output_file)):
+            output_file = join(output_file, "tweets" + (f"_by_{params['granularity']}" if params.get("granularity") else ""))
+
         while True:
-            response = self.request(
-                endpoint=ENDPOINT_DEFAULT.format("search" if params.get("granularity") is None else "counts"),
-                **self.__params(**params),
-            )
 
-            if response.status_code != 200:
-                seconds = (30 if response.status_code == 429 else 5)
-                log.info(f"Retrying in {seconds} seconds...")
-                sleep(seconds)
-                continue
+            try:
+                response = self.request(
+                    endpoint=ENDPOINT_DEFAULT.format("search" if params.get("granularity") is None else "counts"),
+                    **self.__params(**params),
+                )
 
-            response = response.json()
+                if response.status_code != 200:
+                    seconds = (SECONDS_TO_SLEEP if response.status_code == 429 else 5)
+                    log.info(f"Retrying in {seconds} seconds...")
+                    sleep(seconds)
+                    continue
 
-            if low_memory is not True:
-                add_response(response)
+                response = response.json()
 
-            if output_file is not None:
-                self.__write_json(response, output_file, mode="a" if total else "w")
+                if low_memory is not True:
+                    add_response(response)
 
-            total += response.get("meta", {}).get("result_count", response.get("meta", {}).get("total_tweet_count", 0))
-            params["next_token"] = response.get("meta", {}).get("next_token", None)
+                if output_file is not None:
+                    self.__write_json(response, output_file, mode="a" if total else "w")
 
-            if (params["next_token"] is None) or (limit and total >= limit):
-                break
+                total += response.get("meta", {}).get("result_count", response.get("meta", {}).get("total_tweet_count", 0))
+                params["next_token"] = response.get("meta", {}).get("next_token", None)
 
-            if (time() - time_to_print) > 10:
-                log.info(f"Returned {total} tweets.")
-                time_to_print = time()
+                if (params["next_token"] is None) or (limit and total >= limit):
+                    break
 
-            sleep(interval) if float(interval) > 0 else None
+                if (time() - time_to_print) > 10:
+                    log.info(f"Returned {total} tweets.")
+                    time_to_print = time()
+
+                sleep(interval) if float(interval) > 0 else None
+
+            except Exception as e:
+                log.error(f"Exception: {e}")
+                log.info("Retrying in 30 seconds...")
+                sleep(SECONDS_TO_SLEEP)
 
         log.info(f"Returned {total} total tweets.")
         return dict(output_dict)
@@ -138,7 +149,7 @@ class TwitterSearch(Twitter):
 def args() -> dict:
     argparser = ArgumentParser()
     argparser.add_argument("query", help="Required (leave parameter as blank to ignore)")
-    argparser.add_argument("-o", "--output-file", default="RESULTS/tweets.json", dest="output_file", help="Write returned data to JSON file")
+    argparser.add_argument("-o", "--output-file", default="RESULTS", dest="output_file", help="Write returned data to JSON file")
     argparser.add_argument("--days", action="store_const", const="day", dest="granularity", help='Returns daily tweet count')
     argparser.add_argument("--hours", action="store_const", const="hour", dest="granularity", help='Returns hourly tweet count')
     argparser.add_argument("--minutes", action="store_const", const="minute", dest="granularity", help='Returns tweet count per minute')
